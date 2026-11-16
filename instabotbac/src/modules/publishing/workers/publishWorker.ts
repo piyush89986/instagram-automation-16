@@ -28,7 +28,7 @@ export const publishWorker = createWorker('publishingQueue', async (job: Job) =>
 
     const { accessToken, pageAccessToken, instagramAccountId } = account;
     // Meta API requires the PAGE Access Token (not user token) to publish to the linked IG account.
-    const tokenToUse = pageAccessToken || accessToken;
+    const tokenToUse = pageAccessToken || accessToken || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN;
 
     // 2. Upload Media (Container Creation)
     // Simplified for IMAGE. Reels/Carousels require different endpoints/parameters
