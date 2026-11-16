@@ -11,11 +11,15 @@ const redisOptions: RedisOptions = {
   },
 };
 
+// Check if REDIS_URL or if REDIS_HOST contains full redis connection string
+const rawHost = process.env.REDIS_HOST || '';
+const redisUrl = process.env.REDIS_URL || (rawHost.startsWith('redis://') || rawHost.startsWith('rediss://') ? rawHost : null);
+
 // Create a reusable Redis connection for BullMQ and other caching needs
-const redisConnection = process.env.REDIS_URL
-  ? new Redis(process.env.REDIS_URL, redisOptions)
+const redisConnection = redisUrl
+  ? new Redis(redisUrl, redisOptions)
   : new Redis({
-      host: process.env.REDIS_HOST || '127.0.0.1',
+      host: rawHost || '127.0.0.1',
       port: Number(process.env.REDIS_PORT) || 6379,
       ...redisOptions,
     });

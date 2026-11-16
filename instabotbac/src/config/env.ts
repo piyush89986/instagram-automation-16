@@ -22,6 +22,8 @@ export const env = cleanEnv(process.env, {
   GEMINI_API_KEY: str({ default: 'dummy_key' }),
   OPENAI_API_KEY: str({ default: 'dummy_key' }),
 
-  CLIENT_URL: str({ default: '' }),
+  CORS_ORIGIN: str({ default: '' }),
   ALLOWED_ORIGINS: str({ default: '' }),
+  CLIENT_URL: str({ default: '' }),
+  FRONTEND_URL: str({ default: '' }),
 });

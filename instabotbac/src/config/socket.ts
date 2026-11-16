@@ -7,8 +7,10 @@ let io: Server;
 
 export const initSocket = (server: HttpServer): Server => {
   const envOrigins = [
+    ...(env.CORS_ORIGIN ? env.CORS_ORIGIN.split(',') : []),
     ...(env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',') : []),
-    ...(env.CLIENT_URL ? [env.CLIENT_URL] : []),
+    ...(env.CLIENT_URL ? env.CLIENT_URL.split(',') : []),
+    ...(env.FRONTEND_URL ? env.FRONTEND_URL.split(',') : []),
   ].map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
 
   const allowedOrigins = [
