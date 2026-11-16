@@ -3,8 +3,45 @@ import { connectAccounts } from './oauth.service';
 import { AuthRequest } from '../../core/middlewares/authMiddleware';
 import { AppError } from '../../core/middlewares/errorHandler';
 import { processWebhookEvent } from '../automation/automationEngine.service';
+import { env } from '../../config/env';
 
-// ---------- OAUTH ---------- //
+// ---------- OAUTH & CONFIG ---------- //
+
+export const getInstagramConfig = async (req: AuthRequest, res: Response) => {
+  const appId = env.META_APP_ID || process.env.META_APP_ID || '';
+  const hasServerToken = !!(env.META_ACCESS_TOKEN || env.META_ACESS_TOKEN || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      appId,
+      hasServerToken
+    }
+  });
+};
+
+export const connectUsingServerToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const token = env.META_ACCESS_TOKEN || env.META_ACESS_TOKEN || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN;
+    if (!token) {
+      return next(Object.assign(new Error('META_ACCESS_TOKEN is not configured in backend environment variables.'), { statusCode: 400, isOperational: true }));
+    }
+
+    const accounts = await connectAccounts(req.workspaceId as any, token);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        accounts
+      }
+    });
+  } catch (error: any) {
+    const err = new Error('Failed to connect with server token: ' + error.message);
+    (err as AppError).statusCode = 500;
+    (err as AppError).isOperational = true;
+    next(err);
+  }
+};
 
 export const handleOAuthCallback = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {

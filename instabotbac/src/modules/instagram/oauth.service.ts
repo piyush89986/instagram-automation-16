@@ -68,7 +68,14 @@ export const fetchLinkedInstagramAccounts = async (userAccessToken: string) => {
 };
 
 export const connectAccounts = async (workspaceId: string, shortLivedToken: string) => {
-  const longLivedToken = await getLongLivedToken(shortLivedToken);
+  let longLivedToken = shortLivedToken;
+  try {
+    longLivedToken = await getLongLivedToken(shortLivedToken);
+  } catch (err: any) {
+    console.warn('⚠️ Could not exchange token, attempting direct use:', err.message);
+    longLivedToken = shortLivedToken;
+  }
+
   const igAccounts = await fetchLinkedInstagramAccounts(longLivedToken);
 
   if (igAccounts.length === 0) {

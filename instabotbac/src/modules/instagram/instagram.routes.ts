@@ -1,10 +1,19 @@
 import { Router } from 'express';
-import { handleOAuthCallback, verifyWebhook, handleWebhookEvent, getConnectedAccounts } from './instagram.controller';
+import { 
+  handleOAuthCallback, 
+  verifyWebhook, 
+  handleWebhookEvent, 
+  getConnectedAccounts, 
+  getInstagramConfig,
+  connectUsingServerToken 
+} from './instagram.controller';
 import { protect } from '../../core/middlewares/authMiddleware';
 
 const router = Router();
 
-// OAuth Routes (Protected, triggered by frontend after getting FB code/token)
+// Config & OAuth Routes (Protected)
+router.get('/config', protect, getInstagramConfig);
+router.post('/connect-server-token', protect, connectUsingServerToken);
 router.post('/oauth/callback', protect, handleOAuthCallback);
 router.get('/accounts', protect, getConnectedAccounts);
 
