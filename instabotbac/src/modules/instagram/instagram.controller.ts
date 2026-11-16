@@ -107,3 +107,56 @@ export const handleWebhookEvent = async (req: Request, res: Response) => {
     res.sendStatus(404);
   }
 };
+
+export const simulateIncomingWebhook = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { text, senderId } = req.body;
+    const workspaceId = req.workspaceId;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ status: 'error', message: 'Message text is required' });
+    }
+
+    const { InstagramAccount } = await import('../../core/database/models/InstagramAccount');
+    let account = await InstagramAccount.findOne({ workspaceId, isActive: true });
+    if (!account) {
+      account = await InstagramAccount.findOne({ isActive: true });
+    }
+    if (!account) {
+      return res.status(400).json({ status: 'error', message: 'No active Instagram Account found. Please connect your account in Settings first.' });
+    }
+
+    const testSenderId = senderId || 'sim_' + Date.now().toString().slice(-8);
+    const mockMid = 'mid_sim_' + Date.now();
+
+    const mockEvent = {
+      id: account.instagramAccountId || account.metaAccountId,
+      time: Date.now(),
+      messaging: [
+        {
+          sender: { id: testSenderId },
+          recipient: { id: account.instagramAccountId || account.metaAccountId },
+          message: {
+            mid: mockMid,
+            text: text.trim()
+          }
+        }
+      ]
+    };
+
+    console.log('🧪 Simulating webhook event:', mockEvent);
+    await processWebhookEvent(mockEvent);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Simulated DM processed successfully. Check your Inbox!',
+      data: {
+        account: account.username,
+        senderId: testSenderId,
+        text: text.trim()
+      }
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};

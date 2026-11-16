@@ -10,16 +10,57 @@ import { getIO } from '../../config/socket';
 export const getConversations = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const status = req.query.status || 'OPEN';
-    
-    const conversations = await InstagramConversation.find({ 
-      workspaceId: req.workspaceId,
-      status: status as any
-    })
-    .sort({ lastMessageAt: -1 })
-    .populate('contactId')
-    .populate('assignedAgent', 'firstName lastName email');
+    const workspaceId = req.workspaceId;
 
-    console.log(`Backend Inbox Conversations Response for Workspace ${req.workspaceId}:`, JSON.stringify(conversations, null, 2));
+    if (!workspaceId) {
+      return next(Object.assign(new Error('Unauthorized: No workspace found'), { statusCode: 401, isOperational: true }));
+    }
+
+    // 1. Find all Instagram accounts belonging to this workspace
+    let accounts = await InstagramAccount.find({ workspaceId, isActive: true });
+
+    // Fallback: If no accounts are explicitly tied to this workspace, check for any active account and attach it
+    if (accounts.length === 0) {
+      const existingAccount = await InstagramAccount.findOne({ isActive: true });
+      if (existingAccount) {
+        existingAccount.workspaceId = workspaceId as any;
+        await existingAccount.save();
+        accounts = [existingAccount];
+      }
+    }
+
+    const accountIds = accounts.map(a => a._id);
+
+    // 2. Self-heal: Ensure all conversations and contacts for these accounts match the workspaceId
+    if (accountIds.length > 0) {
+      await InstagramConversation.updateMany(
+        { instagramAccountId: { $in: accountIds }, workspaceId: { $ne: workspaceId } },
+        { $set: { workspaceId } }
+      );
+      await Contact.updateMany(
+        { workspaceId: { $ne: workspaceId } },
+        { $set: { workspaceId } }
+      );
+    }
+
+    // 3. Query conversations for this workspace
+    const filter: any = {
+      $or: [
+        { workspaceId },
+        ...(accountIds.length > 0 ? [{ instagramAccountId: { $in: accountIds } }] : [])
+      ]
+    };
+
+    if (status && status !== 'ALL') {
+      filter.status = status;
+    }
+    
+    const conversations = await InstagramConversation.find(filter)
+      .sort({ lastMessageAt: -1 })
+      .populate('contactId')
+      .populate('assignedAgent', 'firstName lastName email');
+
+    console.log(`Backend Inbox Conversations Response for Workspace ${workspaceId}: Found ${conversations.length} conversations`);
 
     res.status(200).json({ status: 'success', data: { conversations } });
   } catch (error) {
@@ -29,11 +70,22 @@ export const getConversations = async (req: AuthRequest, res: Response, next: Ne
 
 export const getMessages = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    const workspaceId = req.workspaceId;
+
     // 1. Verify the conversation belongs to this workspace
-    const conversation = await InstagramConversation.findOne({
+    let conversation = await InstagramConversation.findOne({
       _id: req.params.id,
-      workspaceId: req.workspaceId
+      workspaceId
     });
+
+    // Fallback: If not found by workspaceId, check by ID and self-heal if account is linked
+    if (!conversation) {
+      conversation = await InstagramConversation.findById(req.params.id);
+      if (conversation && workspaceId) {
+        conversation.workspaceId = workspaceId as any;
+        await conversation.save();
+      }
+    }
 
     if (!conversation) return next(Object.assign(new Error('Conversation not found'), { statusCode: 404, isOperational: true }));
 

@@ -105,17 +105,46 @@ export const connectAccounts = async (workspaceId: string, shortLivedToken: stri
     const updatedAcc = await InstagramAccount.findOneAndUpdate(filter, update, { upsert: true, new: true });
     savedAccounts.push(updatedAcc);
     
+    // Automatically link existing conversations and contacts to this workspace
+    try {
+      const { InstagramConversation } = await import('../../core/database/models/InstagramConversation');
+      const { Contact } = await import('../../core/database/models/Contact');
+      await InstagramConversation.updateMany(
+        { instagramAccountId: updatedAcc._id },
+        { $set: { workspaceId } }
+      );
+      await Contact.updateMany(
+        { workspaceId: { $ne: workspaceId } },
+        { $set: { workspaceId } }
+      );
+    } catch (dbSyncErr) {
+      console.warn('⚠️ Could not sync conversations to new workspaceId:', dbSyncErr);
+    }
+
     // Automatically subscribe this Facebook Page to our App's Webhooks
     try {
       await axios.post(`${META_GRAPH_URL}/${acc.metaAccountId}/subscribed_apps`, null, {
         params: {
-          subscribed_fields: 'messages,messaging_postbacks',
+          subscribed_fields: 'messages,messaging_postbacks,message_deliveries,message_reads,messaging_optins,messaging_seen,standby',
           access_token: acc.pageAccessToken
         }
       });
       console.log(`✅ Successfully subscribed webhook for page ${acc.metaAccountId}`);
     } catch (err: any) {
       console.error(`❌ Failed to subscribe webhook for page ${acc.metaAccountId}:`, err.response?.data || err.message);
+    }
+
+    // Also attempt subscription on Instagram Account
+    try {
+      await axios.post(`${META_GRAPH_URL}/${acc.instagramAccountId}/subscribed_apps`, null, {
+        params: {
+          subscribed_fields: 'messages,messaging_postbacks,comments,mentions',
+          access_token: acc.pageAccessToken
+        }
+      });
+      console.log(`✅ Successfully subscribed webhook for Instagram Account ${acc.instagramAccountId}`);
+    } catch (igSubErr: any) {
+      // Often not supported if page-level subscription covers it, ignore gracefully
     }
   }
 

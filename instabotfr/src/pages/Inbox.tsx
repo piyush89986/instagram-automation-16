@@ -2,14 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchConversations, fetchMessages, toggleHumanTakeover, sendManualMessage } from '../services/inbox.service';
 import { useSocket } from '../contexts/SocketContext';
+import api from '../lib/axios';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Search, Bot, User as UserIcon, Send, MessageSquare, Loader2 } from 'lucide-react';
+import { Search, Bot, User as UserIcon, Send, MessageSquare, Loader2, Sparkles, X } from 'lucide-react';
 
 export default function Inbox() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showSimulateModal, setShowSimulateModal] = useState(false);
+  const [simulateText, setSimulateText] = useState('Hi, what are your shop hours and products?');
+  const [simulating, setSimulating] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const queryClient = useQueryClient();
@@ -56,8 +60,11 @@ export default function Inbox() {
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
 
       const convId = payload?.conversation?._id || payload?.message?.conversationId;
-      if (convId === activeConversationId) {
-        queryClient.invalidateQueries({ queryKey: ['messages', activeConversationId] });
+      if (convId === activeConversationId || !activeConversationId) {
+        if (!activeConversationId && convId) {
+          setActiveConversationId(convId);
+        }
+        queryClient.invalidateQueries({ queryKey: ['messages', convId] });
       }
     };
 
@@ -107,6 +114,24 @@ export default function Inbox() {
     sendReplyMutation.mutate(text);
   };
 
+  const handleSimulate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simulateText.trim() || simulating) return;
+    setSimulating(true);
+    try {
+      await api.post('/instagram/debug/simulate', { text: simulateText.trim() });
+      setShowSimulateModal(false);
+      // Wait a moment for AI generation and refresh
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      }, 1500);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to simulate webhook event.');
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   const filteredConversations = conversations.filter((c: any) => {
     const username = (c.contactId?.username || '').toLowerCase();
     const name = (c.contactId?.name || '').toLowerCase();
@@ -115,20 +140,61 @@ export default function Inbox() {
   });
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] bg-card border border-border rounded-xl overflow-hidden shadow-sm animate-fade-in">
+    <div className="flex h-[calc(100vh-8rem)] bg-card border border-border rounded-xl overflow-hidden shadow-sm animate-fade-in relative">
       
+      {/* Simulation Modal */}
+      {showSimulateModal && (
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-foreground flex items-center gap-2">
+                <Sparkles size={18} className="text-primary" /> Simulate Incoming Instagram DM
+              </h3>
+              <button onClick={() => setShowSimulateModal(false)} className="text-muted-foreground hover:text-foreground">
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Send a test message as if an Instagram follower sent it. Your bot will process it, run AI generation, and reply here in real time.
+            </p>
+            <form onSubmit={handleSimulate} className="space-y-4">
+              <Input
+                value={simulateText}
+                onChange={(e) => setSimulateText(e.target.value)}
+                placeholder="Type test DM..."
+                required
+              />
+              <div className="flex gap-2 justify-end">
+                <Button type="button" variant="outline" onClick={() => setShowSimulateModal(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={simulating || !simulateText.trim()}>
+                  {simulating ? <><Loader2 className="animate-spin mr-2" size={16} /> Processing...</> : 'Send Test DM'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Left Sidebar: Conversation List */}
       <div className="w-80 border-r border-border flex flex-col bg-muted/10">
-        <div className="p-4 border-b border-border">
+        <div className="p-3 border-b border-border space-y-2">
           <div className="relative">
-            <Search size={16} className="absolute left-3 top-3 text-muted-foreground" />
+            <Search size={16} className="absolute left-3 top-2.5 text-muted-foreground" />
             <Input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 bg-background" 
+              className="pl-9 bg-background h-9" 
               placeholder="Search leads..." 
             />
           </div>
+          <button
+            onClick={() => setShowSimulateModal(true)}
+            className="w-full text-xs font-medium py-1.5 px-3 rounded-lg border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Sparkles size={14} /> Test Bot / Simulate DM
+          </button>
         </div>
         
         <div className="flex-1 overflow-y-auto">
@@ -137,8 +203,11 @@ export default function Inbox() {
               <Loader2 className="animate-spin mr-2" size={16} /> Loading conversations...
             </div>
           ) : filteredConversations.length === 0 ? (
-            <div className="p-6 text-center text-xs text-muted-foreground">
-              No conversations found. DMs sent to your connected Instagram account will appear here.
+            <div className="p-6 text-center text-xs text-muted-foreground space-y-3">
+              <p>No conversations found yet.</p>
+              <Button size="sm" variant="outline" onClick={() => setShowSimulateModal(true)} className="gap-1 text-xs">
+                <Sparkles size={12} /> Test Bot with Simulated DM
+              </Button>
             </div>
           ) : (
             filteredConversations.map((conv: any) => (
@@ -264,9 +333,15 @@ export default function Inbox() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+          <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-6 text-center">
             <MessageSquare size={48} className="mb-4 opacity-20" />
-            <p>Select a conversation to view thread</p>
+            <p className="text-sm font-medium">Select a conversation to view thread</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              Incoming DMs from your connected Instagram account will appear here in real-time.
+            </p>
+            <Button size="sm" variant="outline" onClick={() => setShowSimulateModal(true)} className="gap-1 text-xs mt-4">
+              <Sparkles size={12} /> Test Bot with Simulated DM
+            </Button>
           </div>
         )}
       </div>
