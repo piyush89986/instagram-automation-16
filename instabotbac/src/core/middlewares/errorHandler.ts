@@ -8,25 +8,28 @@ export interface AppError extends Error {
 
 export const errorHandler = (err: AppError, req: Request, res: Response, next: NextFunction) => {
   const statusCode = err.statusCode || 500;
-  const isOperational = err.isOperational || false;
-  const message = err.message || 'Internal Server Error';
-
-  console.error(`[Error] ${statusCode} - ${message}`);
+  const isOperational = err.isOperational ?? false;
   
-  if (!isOperational && !env.isProduction) {
+  // In production, mask non-operational internal errors
+  const message = (env.isProduction && !isOperational && statusCode === 500)
+    ? 'Internal Server Error'
+    : (err.message || 'An unexpected error occurred');
+
+  // Log full error details server-side
+  console.error(`[Error] ${req.method} ${req.originalUrl} - ${statusCode} - ${err.message}`);
+  if (err.stack && (!env.isProduction || !isOperational)) {
     console.error(err.stack);
   }
 
   res.status(statusCode).json({
     status: 'error',
-    message: message,
-    stack: err.stack,
-    error: message
+    message,
+    ...(env.isProduction ? {} : { stack: err.stack }),
   });
 };
 
 export const notFoundHandler = (req: Request, res: Response, next: NextFunction) => {
-  const error: AppError = new Error(`Route Not Found: ${req.originalUrl}`);
+  const error: AppError = new Error(`Route Not Found: ${req.method} ${req.originalUrl}`);
   error.statusCode = 404;
   error.isOperational = true;
   next(error);

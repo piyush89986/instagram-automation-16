@@ -1,0 +1,60 @@
+services:
+  # Backend Web Service
+  - type: web
+    name: instabot-backend
+    env: node
+    rootDir: instabotbac
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: instabot-redis
+          property: connectionString
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://*.vercel.app,https://*.onrender.com
+
+  # Redis for Background Queue Workers
+  - type: redis
+    name: instabot-redis
+    plan: free
+    ipAllowList: []
+
+  # Frontend Static Site
+  - type: static
+    name: instabot-frontend
+    rootDir: instabotfr
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_BACKEND_URL
+        sync: false

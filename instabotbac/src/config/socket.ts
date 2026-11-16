@@ -1,10 +1,16 @@
 import { Server } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { verifyAccessToken } from '../core/utils/jwt';
+import { env } from './env';
 
 let io: Server;
 
 export const initSocket = (server: HttpServer): Server => {
+  const envOrigins = [
+    ...(env.ALLOWED_ORIGINS ? env.ALLOWED_ORIGINS.split(',') : []),
+    ...(env.CLIENT_URL ? [env.CLIENT_URL] : []),
+  ].map(s => s.trim().replace(/\/$/, '')).filter(Boolean);
+
   const allowedOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
@@ -13,16 +19,24 @@ export const initSocket = (server: HttpServer): Server => {
     'https://instabotfr.vercel.app',
     'https://instabot-black.vercel.app',
     'https://instabotfrlive-dashboard.vercel.app',
-    'https://instabotfrlive-dashboard-joqc5dw5i.vercel.app'
+    'https://instabotfrlive-dashboard-joqc5dw5i.vercel.app',
+    ...envOrigins
   ];
 
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin) || /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) || allowedOrigins.includes(origin)) {
+        if (!origin) return callback(null, true);
+        const cleanOrigin = origin.replace(/\/$/, '');
+        if (
+          /^http:\/\/localhost(:\d+)?$/.test(cleanOrigin) ||
+          /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin) ||
+          allowedOrigins.includes(cleanOrigin) ||
+          cleanOrigin.endsWith('.vercel.app')
+        ) {
           return callback(null, true);
         }
-        return callback(new Error('Not allowed by CORS'));
+        return callback(new Error(`Not allowed by CORS: ${origin}`));
       },
       methods: ['GET', 'POST'],
       credentials: true

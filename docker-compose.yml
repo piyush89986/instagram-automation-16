@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./instabotbac
+      dockerfile: Dockerfile
+    container_name: instabot_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGO_URI=mongodb://mongodb:27017/ig-saas
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your_super_secret_jwt_access_key}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your_super_secret_jwt_refresh_key}
+      - META_APP_ID=${META_APP_ID:-}
+      - META_APP_SECRET=${META_APP_SECRET:-}
+      - META_WEBHOOK_VERIFY_TOKEN=${META_WEBHOOK_VERIFY_TOKEN:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost:80
+    depends_on:
+      - mongodb
+      - redis
+
+  frontend:
+    build:
+      context: ./instabotfr
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:5000/api/v1
+        - VITE_BACKEND_URL=http://localhost:5000
+    container_name: instabot_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+  mongodb:
+    image: mongo:7.0
+    container_name: instabot_mongodb
+    restart: always
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: instabot_redis
+    restart: always
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mongo_data:
+  redis_data:

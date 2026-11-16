@@ -9,6 +9,7 @@
     "build:backend": "npm --prefix instabotbac run build",
     "build:frontend": "npm --prefix instabotfr run build",
     "build": "npm run build:backend && npm run build:frontend",
+    "start:backend": "npm --prefix instabotbac run start",
     "seed": "npm --prefix instabotbac run seed",
     "install:all": "npm --prefix instabotbac install && npm --prefix instabotfr install"
   }
