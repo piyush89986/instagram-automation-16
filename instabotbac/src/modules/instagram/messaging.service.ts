@@ -8,11 +8,20 @@ const getMetaToken = (account: IInstagramAccount | null): string => {
   return account?.pageAccessToken || account?.accessToken || env.META_ACCESS_TOKEN || env.META_ACESS_TOKEN || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN || '';
 };
 
+const findAccount = async (id: string) => {
+  return InstagramAccount.findOne({
+    $or: [
+      { instagramAccountId: id },
+      { metaAccountId: id }
+    ]
+  });
+};
+
 /**
  * Send a simple text DM via the Messenger API
  */
 export const sendTextMessage = async (instagramAccountId: string, recipientIgUserId: string, text: string) => {
-  const account = await InstagramAccount.findOne({ instagramAccountId });
+  const account = await findAccount(instagramAccountId);
   const token = getMetaToken(account);
   if (!account && !token) throw new Error('Instagram account or Meta Access Token not found');
 
@@ -41,7 +50,7 @@ export const sendTextMessage = async (instagramAccountId: string, recipientIgUse
  * Send a media DM (Image, Video, Audio, File) via the Messenger API
  */
 export const sendMediaMessage = async (instagramAccountId: string, recipientIgUserId: string, mediaUrl: string, mediaType: 'image' | 'video' | 'audio' | 'file') => {
-  const account = await InstagramAccount.findOne({ instagramAccountId });
+  const account = await findAccount(instagramAccountId);
   const token = getMetaToken(account);
   if (!account && !token) throw new Error('Instagram account or Meta Access Token not found');
 
@@ -75,7 +84,7 @@ export const sendMediaMessage = async (instagramAccountId: string, recipientIgUs
  * Reply publicly to an Instagram Comment
  */
 export const replyToComment = async (instagramAccountId: string, commentId: string, message: string) => {
-  const account = await InstagramAccount.findOne({ instagramAccountId });
+  const account = await findAccount(instagramAccountId);
   const token = getMetaToken(account);
   if (!account && !token) throw new Error('Instagram account or Meta Access Token not found');
 
@@ -98,7 +107,7 @@ export const replyToComment = async (instagramAccountId: string, commentId: stri
  * Send a Generic Template (Carousel/Cards) DM via the Messenger API
  */
 export const sendGenericTemplate = async (instagramAccountId: string, recipientIgUserId: string, elements: any[]) => {
-  const account = await InstagramAccount.findOne({ instagramAccountId });
+  const account = await findAccount(instagramAccountId);
   const token = getMetaToken(account);
   if (!account && !token) throw new Error('Instagram account or Meta Access Token not found');
 

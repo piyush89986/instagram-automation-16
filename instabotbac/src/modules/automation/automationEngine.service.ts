@@ -21,8 +21,16 @@ export const processWebhookEvent = async (event: any) => {
     return;
   }
 
-  const account = await InstagramAccount.findOne({ instagramAccountId: igAccountId });
-  if (!account) return;
+  const account = await InstagramAccount.findOne({
+    $or: [
+      { instagramAccountId: igAccountId },
+      { metaAccountId: igAccountId }
+    ]
+  });
+  if (!account) {
+    console.warn(`⚠️ No InstagramAccount found matching receiver ID ${igAccountId}. Active accounts in DB may use different ID.`);
+    return;
+  }
 
   for (const messageEvent of (event.messaging || [])) {
     const senderId = messageEvent.sender.id; // IG User sending the DM
@@ -35,13 +43,19 @@ export const processWebhookEvent = async (event: any) => {
 
     // Deduplicate: Check if message with this mid already exists
     if (messageEvent.message.mid) {
-      const lockKey = `webhook:lock:mid:${messageEvent.message.mid}`;
-      const isNew = await redisConnection.setnx(lockKey, '1');
-      if (isNew === 0) {
-        console.log('⚠️ Duplicate webhook ignored via Redis lock for mid:', messageEvent.message.mid);
-        continue;
+      if (redisConnection && redisConnection.status === 'ready') {
+        try {
+          const lockKey = `webhook:lock:mid:${messageEvent.message.mid}`;
+          const isNew = await redisConnection.setnx(lockKey, '1');
+          if (isNew === 0) {
+            console.log('⚠️ Duplicate webhook ignored via Redis lock for mid:', messageEvent.message.mid);
+            continue;
+          }
+          await redisConnection.expire(lockKey, 3600); // 1 hr expiry
+        } catch {
+          // Redis offline, proceed to MongoDB check
+        }
       }
-      await redisConnection.expire(lockKey, 3600); // 1 hr expiry
 
       const existingMsg = await InstagramMessage.findOne({ metaMessageId: messageEvent.message.mid });
       if (existingMsg) {
@@ -154,7 +168,10 @@ export const processWebhookEvent = async (event: any) => {
     });
     
     const workflows = await AutomationWorkflow.find({
-      workspaceId: account.workspaceId.toString(),
+      $or: [
+        { workspaceId: account.workspaceId },
+        { workspaceId: account.workspaceId.toString() }
+      ],
       triggerType: triggerType as any,
       isActive: true
     });
@@ -246,7 +263,7 @@ export const processWebhookEvent = async (event: any) => {
         // Strip out hidden context tags before sending to Meta
         const textToMeta = replyText.replace(/ \[HIDDEN_CONTEXT:.*?\]/g, '').trim();
         if (textToMeta) {
-          await sendTextMessage(igAccountId, senderId, textToMeta);
+          await sendTextMessage(account.instagramAccountId || igAccountId, senderId, textToMeta);
           console.log(`🤖 Text message sent successfully to Meta`);
         }
         
