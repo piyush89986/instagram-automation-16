@@ -31,16 +31,16 @@ export const getConversations = async (req: AuthRequest, res: Response, next: Ne
 
     const accountIds = accounts.map(a => a._id);
 
-    // 2. Self-heal: Ensure all conversations and contacts for these accounts match the workspaceId
-    if (accountIds.length > 0) {
-      await InstagramConversation.updateMany(
-        { instagramAccountId: { $in: accountIds }, workspaceId: { $ne: workspaceId } },
-        { $set: { workspaceId } }
-      );
-      await Contact.updateMany(
-        { workspaceId: { $ne: workspaceId } },
-        { $set: { workspaceId } }
-      );
+    // 2. Self-heal: Ensure all conversations for these accounts match the workspaceId
+    try {
+      if (accountIds.length > 0) {
+        await InstagramConversation.updateMany(
+          { instagramAccountId: { $in: accountIds }, workspaceId: { $ne: workspaceId } },
+          { $set: { workspaceId } }
+        );
+      }
+    } catch (healErr) {
+      console.warn('Conversation workspace sync warning:', healErr);
     }
 
     // 3. Query conversations for this workspace

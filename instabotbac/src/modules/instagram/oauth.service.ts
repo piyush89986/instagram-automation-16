@@ -105,16 +105,11 @@ export const connectAccounts = async (workspaceId: string, shortLivedToken: stri
     const updatedAcc = await InstagramAccount.findOneAndUpdate(filter, update, { upsert: true, new: true });
     savedAccounts.push(updatedAcc);
     
-    // Automatically link existing conversations and contacts to this workspace
+    // Automatically link existing conversations to this workspace
     try {
       const { InstagramConversation } = await import('../../core/database/models/InstagramConversation');
-      const { Contact } = await import('../../core/database/models/Contact');
       await InstagramConversation.updateMany(
         { instagramAccountId: updatedAcc._id },
-        { $set: { workspaceId } }
-      );
-      await Contact.updateMany(
-        { workspaceId: { $ne: workspaceId } },
         { $set: { workspaceId } }
       );
     } catch (dbSyncErr) {
