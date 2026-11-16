@@ -9,12 +9,14 @@ import { env } from '../../config/env';
 
 export const getInstagramConfig = async (req: AuthRequest, res: Response) => {
   const appId = env.META_APP_ID || process.env.META_APP_ID || '';
+  const configId = env.META_CONFIG_ID || process.env.META_CONFIG_ID || '';
   const hasServerToken = !!(env.META_ACCESS_TOKEN || env.META_ACESS_TOKEN || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN);
 
   res.status(200).json({
     status: 'success',
     data: {
       appId,
+      configId,
       hasServerToken
     }
   });

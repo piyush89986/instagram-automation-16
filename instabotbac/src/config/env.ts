@@ -18,6 +18,7 @@ export const env = cleanEnv(process.env, {
   META_APP_ID: str({ default: '' }),
   META_APP_SECRET: str({ default: '' }),
   META_WEBHOOK_VERIFY_TOKEN: str({ default: '' }),
+  META_CONFIG_ID: str({ default: '' }),
   META_ACCESS_TOKEN: str({ default: process.env.META_ACESS_TOKEN || '' }),
   META_ACESS_TOKEN: str({ default: '' }),
 

@@ -57,6 +57,7 @@ export default function Settings() {
   });
 
   const appId = (import.meta.env.VITE_META_APP_ID || metaConfig?.appId || '').trim();
+  const configId = ((import.meta.env as any).VITE_META_CONFIG_ID || (import.meta.env as any).META_CONFIG_ID || metaConfig?.configId || '').trim();
   const hasServerToken = metaConfig?.hasServerToken || false;
 
   // Pre-load Facebook SDK as soon as appId is available
@@ -164,6 +165,17 @@ export default function Settings() {
 
   const triggerLogin = () => {
     try {
+      const loginOptions: any = {
+        auth_type: 'rerequest',
+      };
+
+      if (configId) {
+        // Facebook Login for Business Configuration ID
+        loginOptions.config_id = configId;
+      } else {
+        loginOptions.scope = 'instagram_basic,instagram_manage_messages,instagram_manage_comments,instagram_content_publish,pages_messaging,pages_read_engagement,pages_show_list,business_management';
+      }
+
       window.FB.login(
         (response: any) => {
           if (response.authResponse?.accessToken) {
@@ -173,10 +185,7 @@ export default function Settings() {
             setStatus('❌ Facebook login popup was closed or cancelled.');
           }
         },
-        {
-          scope: 'instagram_basic,instagram_manage_messages,instagram_manage_comments,instagram_content_publish,pages_messaging,pages_read_engagement,pages_show_list,business_management',
-          auth_type: 'rerequest',
-        }
+        loginOptions
       );
     } catch (err: any) {
       setStatus('❌ Error launching Facebook Login: ' + err.message);
