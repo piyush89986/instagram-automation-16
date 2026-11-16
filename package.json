@@ -1,0 +1,15 @@
+{
+  "name": "instagram-automation-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Instagram SaaS Automation Platform - Fullstack Root",
+  "scripts": {
+    "dev:backend": "npm --prefix instabotbac run dev",
+    "dev:frontend": "npm --prefix instabotfr run dev",
+    "build:backend": "npm --prefix instabotbac run build",
+    "build:frontend": "npm --prefix instabotfr run build",
+    "build": "npm run build:backend && npm run build:frontend",
+    "seed": "npm --prefix instabotbac run seed",
+    "install:all": "npm --prefix instabotbac install && npm --prefix instabotfr install"
+  }
+}
