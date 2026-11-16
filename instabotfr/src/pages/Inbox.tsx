@@ -5,7 +5,7 @@ import { useSocket } from '../contexts/SocketContext';
 import api from '../lib/axios';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Search, Bot, User as UserIcon, Send, MessageSquare, Loader2, Sparkles, X } from 'lucide-react';
+import { Search, Bot, User as UserIcon, Send, MessageSquare, Loader2, Sparkles, X, RefreshCw } from 'lucide-react';
 
 export default function Inbox() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -14,10 +14,24 @@ export default function Inbox() {
   const [showSimulateModal, setShowSimulateModal] = useState(false);
   const [simulateText, setSimulateText] = useState('Hi, what are your shop hours and products?');
   const [simulating, setSimulating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const queryClient = useQueryClient();
   const { socket } = useSocket();
+
+  const handleSyncInstagram = async () => {
+    setSyncing(true);
+    try {
+      const { data } = await api.post('/instagram/sync');
+      alert(data.message || 'Instagram chats synced successfully!');
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to sync with Instagram.');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // Fetch Conversations
   const { data: conversations = [], isLoading: loadingConversations } = useQuery({
@@ -189,12 +203,21 @@ export default function Inbox() {
               placeholder="Search leads..." 
             />
           </div>
-          <button
-            onClick={() => setShowSimulateModal(true)}
-            className="w-full text-xs font-medium py-1.5 px-3 rounded-lg border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors flex items-center justify-center gap-1.5"
-          >
-            <Sparkles size={14} /> Test Bot / Simulate DM
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowSimulateModal(true)}
+              className="flex-1 text-xs font-medium py-1.5 px-2 rounded-lg border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors flex items-center justify-center gap-1"
+            >
+              <Sparkles size={13} /> Test Bot
+            </button>
+            <button
+              onClick={handleSyncInstagram}
+              disabled={syncing}
+              className="flex-1 text-xs font-medium py-1.5 px-2 rounded-lg border border-border bg-secondary hover:bg-secondary/80 text-foreground transition-colors flex items-center justify-center gap-1"
+            >
+              <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} /> {syncing ? 'Syncing...' : 'Sync Instagram'}
+            </button>
+          </div>
         </div>
         
         <div className="flex-1 overflow-y-auto">

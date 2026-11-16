@@ -6,7 +6,8 @@ import {
   getConnectedAccounts, 
   getInstagramConfig,
   connectUsingServerToken,
-  simulateIncomingWebhook
+  simulateIncomingWebhook,
+  syncConversations
 } from './instagram.controller';
 import { protect } from '../../core/middlewares/authMiddleware';
 
@@ -17,6 +18,7 @@ router.get('/config', protect, getInstagramConfig);
 router.post('/connect-server-token', protect, connectUsingServerToken);
 router.post('/oauth/callback', protect, handleOAuthCallback);
 router.get('/accounts', protect, getConnectedAccounts);
+router.post('/sync', protect, syncConversations);
 router.post('/debug/simulate', protect, simulateIncomingWebhook);
 
 // Webhook Routes (Public, hit by Meta servers)

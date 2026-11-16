@@ -156,17 +156,34 @@ export default function Publishing() {
 
             {/* Media URL */}
             <div>
-              <label className="block text-sm font-medium mb-2">
-                Public Media URL <span className="text-xs text-muted-foreground">({postType === 'IMAGE' ? 'JPEG/PNG image' : 'MP4 video'})</span>
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium">
+                  Public Media URL <span className="text-xs text-muted-foreground">({postType === 'IMAGE' ? 'JPEG/PNG direct link' : 'MP4 video direct link'})</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (postType === 'IMAGE') {
+                      setMediaUrl('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&h=1080&fit=crop&q=80');
+                      if (!caption) setCaption('Excited to share our latest updates! Check out our collection. #business #updates');
+                    } else {
+                      setMediaUrl('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4');
+                      if (!caption) setCaption('Check out this amazing reel! #trending');
+                    }
+                  }}
+                  className="text-xs text-primary hover:underline font-medium"
+                >
+                  Use Valid Sample {postType === 'IMAGE' ? 'Image' : 'Video'}
+                </button>
+              </div>
               <Input 
                 value={mediaUrl}
                 onChange={(e) => setMediaUrl(e.target.value)}
-                placeholder="https://images.unsplash.com/photo-..."
+                placeholder={postType === 'IMAGE' ? "https://images.unsplash.com/...jpg" : "https://example.com/video.mp4"}
                 required
               />
               <p className="text-[11px] text-muted-foreground mt-1.5">
-                Note: Instagram requires media URLs to be publicly accessible over HTTPS.
+                Note: Must be a direct URL to a raw image or video file. Webpages or Google Drive share links will be rejected with "The image format is not supported" by Meta.
               </p>
             </div>
 

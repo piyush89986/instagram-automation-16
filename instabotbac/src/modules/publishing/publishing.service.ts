@@ -35,65 +35,87 @@ export const executePublishPost = async (postId: mongoose.Types.ObjectId | strin
 
   try {
     let containerId: string;
-    if (post.postType === 'IMAGE') {
-      const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
-        image_url: post.mediaUrls[0],
-        caption: post.caption,
-        access_token: tokenToUse
-      });
-      containerId = createData.id;
-    } else if (post.postType === 'REEL') {
-      const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
-        media_type: 'REELS',
-        video_url: post.mediaUrls[0],
-        caption: post.caption,
-        access_token: tokenToUse
-      });
-      containerId = createData.id;
-    } else if (post.postType === 'STORY') {
-      const isVideo = post.mediaUrls[0]?.endsWith('.mp4') || post.mediaUrls[0]?.endsWith('.mov');
-      const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
-        media_type: 'STORIES',
-        ...(isVideo ? { video_url: post.mediaUrls[0] } : { image_url: post.mediaUrls[0] }),
-        access_token: tokenToUse
-      });
-      containerId = createData.id;
-    } else if (post.postType === 'CAROUSEL') {
-      const childrenIds = [];
-      for (const url of post.mediaUrls) {
-        const isVideo = url.endsWith('.mp4') || url.endsWith('.mov');
-        const { data: childData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
-          is_carousel_item: true,
-          ...(isVideo ? { media_type: 'VIDEO', video_url: url } : { image_url: url }),
+    try {
+      if (post.postType === 'IMAGE') {
+        const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
+          image_url: post.mediaUrls[0],
+          caption: post.caption,
           access_token: tokenToUse
         });
-        childrenIds.push(childData.id);
+        containerId = createData.id;
+      } else if (post.postType === 'REEL') {
+        const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
+          media_type: 'REELS',
+          video_url: post.mediaUrls[0],
+          caption: post.caption,
+          access_token: tokenToUse
+        });
+        containerId = createData.id;
+      } else if (post.postType === 'STORY') {
+        const isVideo = post.mediaUrls[0]?.endsWith('.mp4') || post.mediaUrls[0]?.endsWith('.mov');
+        const { data: createData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
+          media_type: 'STORIES',
+          ...(isVideo ? { video_url: post.mediaUrls[0] } : { image_url: post.mediaUrls[0] }),
+          access_token: tokenToUse
+        });
+        containerId = createData.id;
+      } else if (post.postType === 'CAROUSEL') {
+        const childrenIds = [];
+        for (const url of post.mediaUrls) {
+          const isVideo = url.endsWith('.mp4') || url.endsWith('.mov');
+          const { data: childData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
+            is_carousel_item: true,
+            ...(isVideo ? { media_type: 'VIDEO', video_url: url } : { image_url: url }),
+            access_token: tokenToUse
+          });
+          childrenIds.push(childData.id);
+        }
+        const { data: carouselData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
+          media_type: 'CAROUSEL',
+          children: childrenIds.join(','),
+          caption: post.caption,
+          access_token: tokenToUse
+        });
+        containerId = carouselData.id;
+      } else {
+        throw new Error(`Post type ${post.postType} is not supported`);
       }
-      const { data: carouselData } = await axios.post(`${META_GRAPH_URL}/${instagramAccountId}/media`, {
-        media_type: 'CAROUSEL',
-        children: childrenIds.join(','),
-        caption: post.caption,
-        access_token: tokenToUse
-      });
-      containerId = carouselData.id;
-    } else {
-      throw new Error(`Post type ${post.postType} is not supported`);
+    } catch (createErr: any) {
+      const metaErr = createErr.response?.data?.error;
+      if (metaErr?.code === 36001 || metaErr?.error_subcode === 2207083) {
+        throw new Error('The image URL could not be processed by Instagram. Please ensure the URL is a direct, public link to a JPEG or PNG image (e.g. ending in .jpg or .png) and not a webpage or login-protected link.');
+      }
+      throw new Error(metaErr?.message || createErr.message);
     }
 
-    // Status Polling
-    let isReady = false;
-    let retries = 0;
-    while (!isReady && retries < 15) {
-      const { data: statusData } = await axios.get(`${META_GRAPH_URL}/${containerId}`, {
-        params: { fields: 'status_code', access_token: tokenToUse }
-      });
-      if (statusData.status_code === 'FINISHED') {
-        isReady = true;
-      } else if (statusData.status_code === 'ERROR') {
-        throw new Error('Meta media processing failed. Please ensure the media URL is public, direct, and meets Instagram specifications.');
-      } else {
+    // Status Polling: Single IMAGE posts are ready immediately upon container creation!
+    // Videos, Reels, and Video Stories require status polling.
+    if (post.postType !== 'IMAGE') {
+      let isReady = false;
+      let retries = 0;
+      while (!isReady && retries < 25) {
         await delay(3000);
         retries++;
+        try {
+          const { data: statusData } = await axios.get(`${META_GRAPH_URL}/${containerId}`, {
+            params: { fields: 'status_code', access_token: tokenToUse }
+          });
+          console.log(`Video processing poll ${retries}: status_code = ${statusData.status_code}`);
+          if (statusData.status_code === 'FINISHED') {
+            isReady = true;
+            break;
+          } else if (statusData.status_code === 'ERROR') {
+            throw new Error('Meta media processing failed. The video format or encoding is not supported by Instagram.');
+          } else if (statusData.status_code === 'EXPIRED') {
+            throw new Error('Meta media container expired.');
+          }
+        } catch (pollErr: any) {
+          if (pollErr.message?.includes('Meta media processing failed')) throw pollErr;
+        }
+      }
+
+      if (!isReady) {
+        throw new Error('Video is taking longer than expected to process on Instagram. Please wait a moment and check your profile.');
       }
     }
 

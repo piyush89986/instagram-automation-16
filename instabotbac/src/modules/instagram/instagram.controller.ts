@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import axios from 'axios';
 import { connectAccounts } from './oauth.service';
 import { AuthRequest } from '../../core/middlewares/authMiddleware';
 import { AppError } from '../../core/middlewares/errorHandler';
@@ -155,6 +156,134 @@ export const simulateIncomingWebhook = async (req: AuthRequest, res: Response, n
         senderId: testSenderId,
         text: text.trim()
       }
+    });
+  } catch (error: any) {
+    next(error);
+  }
+};
+
+export const syncConversationsInternal = async (workspaceId: any) => {
+  const { InstagramAccount } = await import('../../core/database/models/InstagramAccount');
+  const { InstagramConversation } = await import('../../core/database/models/InstagramConversation');
+  const { InstagramMessage } = await import('../../core/database/models/InstagramMessage');
+  const { Contact } = await import('../../core/database/models/Contact');
+
+  let account = await InstagramAccount.findOne({ workspaceId, isActive: true });
+  if (!account) {
+    account = await InstagramAccount.findOne({ isActive: true });
+  }
+  if (!account) return { syncedCount: 0, messageCount: 0 };
+
+  const token = account.pageAccessToken || account.accessToken || env.META_ACCESS_TOKEN || env.META_ACESS_TOKEN || process.env.META_ACCESS_TOKEN || process.env.META_ACESS_TOKEN;
+  const igId = account.instagramAccountId;
+  if (!token || !igId) return { syncedCount: 0, messageCount: 0 };
+
+  const { data: convData } = await axios.get(
+    `https://graph.facebook.com/v21.0/${igId}/conversations`,
+    {
+      params: {
+        platform: 'instagram',
+        fields: 'id,updated_time,participants,messages.limit(25){id,created_time,from,to,message}',
+        access_token: token
+      }
+    }
+  );
+
+  const conversations = convData.data || [];
+  let syncedCount = 0;
+  let messageCount = 0;
+
+  for (const c of conversations) {
+    const lead = c.participants?.data?.find((p: any) => p.id !== igId);
+    if (!lead || !lead.id) continue;
+
+    let username = lead.username || `ig_user_${lead.id}`;
+    let name = '';
+    let profilePic = '';
+
+    try {
+      const { data: profile } = await axios.get(`https://graph.facebook.com/v21.0/${lead.id}`, {
+        params: { fields: 'name,username,profile_pic', access_token: token }
+      });
+      if (profile.username) username = profile.username;
+      if (profile.name) name = profile.name;
+      if (profile.profile_pic) profilePic = profile.profile_pic;
+    } catch (profErr) {}
+
+    const contact = await Contact.findOneAndUpdate(
+      { workspaceId, instagramUserId: lead.id },
+      {
+        $set: {
+          workspaceId,
+          instagramUserId: lead.id,
+          username,
+          name: name || lead.name || username,
+          profilePicUrl: profilePic || undefined,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    const conversation = await InstagramConversation.findOneAndUpdate(
+      { workspaceId, instagramAccountId: account._id, contactId: contact._id },
+      {
+        $set: {
+          workspaceId,
+          instagramAccountId: account._id,
+          contactId: contact._id,
+          lastMessageAt: c.updated_time ? new Date(c.updated_time) : new Date(),
+          status: 'OPEN'
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    syncedCount++;
+
+    const msgs = (c.messages?.data || []).slice().reverse();
+    for (const m of msgs) {
+      if (!m.message && !m.id) continue;
+      const isFromUser = m.from?.id === lead.id;
+
+      try {
+        await InstagramMessage.findOneAndUpdate(
+          { metaMessageId: m.id },
+          {
+            $set: {
+              conversationId: conversation._id,
+              senderId: m.from?.id || lead.id,
+              text: m.message || '',
+              source: isFromUser ? 'INSTAGRAM' : 'SYSTEM_AI',
+              messageType: 'DM',
+              createdAt: m.created_time ? new Date(m.created_time) : new Date(),
+              isRead: true
+            }
+          },
+          { upsert: true, new: true }
+        );
+        messageCount++;
+      } catch (msgErr) {}
+    }
+  }
+
+  return { syncedCount, messageCount };
+};
+
+export const syncConversations = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const workspaceId = req.workspaceId;
+    const result = await syncConversationsInternal(workspaceId);
+
+    try {
+      const { getIO } = await import('../../config/socket');
+      getIO().to(workspaceId?.toString() as any).emit('conversation_updated', {});
+    } catch (e) {}
+
+    res.status(200).json({
+      status: 'success',
+      message: `Successfully synced ${result.syncedCount} conversations and ${result.messageCount} messages from Instagram!`,
+      data: result
     });
   } catch (error: any) {
     next(error);
