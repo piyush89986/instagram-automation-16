@@ -5,6 +5,7 @@ import { InstagramMessage } from '../../core/database/models/InstagramMessage';
 import { InstagramAccount } from '../../core/database/models/InstagramAccount';
 import { Contact } from '../../core/database/models/Contact';
 import { AutomationWorkflow } from '../../core/database/models/AutomationWorkflow';
+import { getIO } from '../../config/socket';
 
 export const getConversations = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -53,9 +54,15 @@ export const toggleHumanTakeover = async (req: AuthRequest, res: Response, next:
       { _id: req.params.id, workspaceId: req.workspaceId },
       { humanTakeover },
       { new: true }
-    );
+    ).populate('contactId');
 
     if (!conversation) return next(Object.assign(new Error('Conversation not found'), { statusCode: 404, isOperational: true }));
+
+    try {
+      if (req.workspaceId) {
+        getIO().to(req.workspaceId.toString()).emit('conversation_updated', { conversation });
+      }
+    } catch (e) {}
 
     res.status(200).json({ status: 'success', data: { conversation } });
   } catch (error) {
@@ -69,24 +76,73 @@ export const sendManualMessage = async (req: AuthRequest, res: Response, next: N
     const conversationId = req.params.id;
     const workspaceId = req.workspaceId;
 
+    if (!workspaceId) {
+      return next(Object.assign(new Error('Unauthorized: No workspace associated'), { statusCode: 401, isOperational: true }));
+    }
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ status: 'error', message: 'Message text is required' });
+    }
+
     const conversation = await InstagramConversation.findOne({ _id: conversationId, workspaceId });
     if (!conversation) {
       return next(Object.assign(new Error('Conversation not found'), { statusCode: 404, isOperational: true }));
     }
 
+    const contact = await Contact.findById(conversation.contactId);
+    const account = await InstagramAccount.findById(conversation.instagramAccountId);
+
     const newMessage = await InstagramMessage.create({
       conversationId: conversation._id,
-      senderId: conversation.instagramAccountId.toString(),
-      text: message,
+      senderId: account?.metaAccountId || account?.instagramAccountId || 'agent',
+      text: message.trim(),
       source: 'SYSTEM_AGENT',
       messageType: 'DM',
       isRead: true
     });
 
-    // Optionally call Instagram Messaging Service to actually send the message
-    // await import('../instagram/messaging.service').then(m => m.sendTextMessage(...));
+    conversation.lastMessageAt = new Date();
+    await conversation.save();
 
-    res.status(200).json({ status: 'success', data: { message: newMessage } });
+    // Broadcast to Live Inbox (Socket.IO)
+    try {
+      getIO().to(workspaceId.toString()).emit('new_message', {
+        conversation,
+        message: newMessage,
+        contact
+      });
+    } catch (sockErr) {
+      console.error('Socket broadcast failed for manual message:', sockErr);
+    }
+
+    // Deliver to Meta Instagram Messenger API
+    let metaDelivered = false;
+    let metaError: string | null = null;
+    const recipientId = contact?.instagramUserId;
+
+    if (recipientId && account) {
+      try {
+        const { sendTextMessage } = await import('../instagram/messaging.service');
+        const metaRes = await sendTextMessage(account.instagramAccountId || account.metaAccountId, recipientId, message.trim());
+        if (metaRes?.message_id) {
+          newMessage.metaMessageId = metaRes.message_id;
+          await newMessage.save();
+        }
+        metaDelivered = true;
+      } catch (err: any) {
+        metaError = err.response?.data?.error?.message || err.message;
+        console.error('Failed to send manual message to Meta:', metaError);
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        message: newMessage,
+        metaDelivered,
+        metaError
+      }
+    });
   } catch (error) {
     next(error);
   }

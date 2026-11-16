@@ -1,4 +1,5 @@
 import axios from 'axios';
+import mongoose from 'mongoose';
 import { InstagramAccount, IInstagramAccount } from '../../core/database/models/InstagramAccount';
 import { env } from '../../config/env';
 
@@ -9,12 +10,14 @@ const getMetaToken = (account: IInstagramAccount | null): string => {
 };
 
 const findAccount = async (id: string) => {
-  return InstagramAccount.findOne({
-    $or: [
-      { instagramAccountId: id },
-      { metaAccountId: id }
-    ]
-  });
+  const query: any[] = [
+    { instagramAccountId: id },
+    { metaAccountId: id }
+  ];
+  if (mongoose.Types.ObjectId.isValid(id)) {
+    query.push({ _id: id });
+  }
+  return InstagramAccount.findOne({ $or: query });
 };
 
 /**

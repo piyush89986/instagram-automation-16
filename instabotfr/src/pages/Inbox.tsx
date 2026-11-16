@@ -1,47 +1,76 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { fetchConversations, fetchMessages, toggleHumanTakeover } from '../services/inbox.service';
+import { fetchConversations, fetchMessages, toggleHumanTakeover, sendManualMessage } from '../services/inbox.service';
 import { useSocket } from '../contexts/SocketContext';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Search, Bot, User as UserIcon, Send, MessageSquare } from 'lucide-react';
+import { Search, Bot, User as UserIcon, Send, MessageSquare, Loader2 } from 'lucide-react';
 
 export default function Inbox() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
-  
+  const [searchQuery, setSearchQuery] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   const queryClient = useQueryClient();
   const { socket } = useSocket();
 
   // Fetch Conversations
-  const { data: conversations = [] } = useQuery({
+  const { data: conversations = [], isLoading: loadingConversations } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => fetchConversations('OPEN')
   });
 
   // Fetch Active Messages
-  const { data: messages = [] } = useQuery({
+  const { data: messages = [], isLoading: loadingMessages } = useQuery({
     queryKey: ['messages', activeConversationId],
     queryFn: () => fetchMessages(activeConversationId!),
     enabled: !!activeConversationId
   });
 
+  // Auto-select first conversation if none selected
+  useEffect(() => {
+    if (!activeConversationId && conversations.length > 0) {
+      setActiveConversationId(conversations[0]._id);
+    }
+  }, [conversations, activeConversationId]);
+
+  // Scroll to bottom helper
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  useEffect(() => {
+    scrollToBottom('auto');
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    scrollToBottom('smooth');
+  }, [messages]);
+
   // Handle Real-time socket events
   useEffect(() => {
     if (!socket) return;
-    
-    socket.on('new_message', (payload: any) => {
-      // Invalidate queries to refresh UI
+
+    const handleNewMessage = (payload: any) => {
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      
-      if (payload.conversation._id === activeConversationId) {
-        // Optimistic UI update could go here, but invalidating is safer
+
+      const convId = payload?.conversation?._id || payload?.message?.conversationId;
+      if (convId === activeConversationId) {
         queryClient.invalidateQueries({ queryKey: ['messages', activeConversationId] });
       }
-    });
+    };
+
+    const handleConvUpdated = () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    };
+
+    socket.on('new_message', handleNewMessage);
+    socket.on('conversation_updated', handleConvUpdated);
 
     return () => {
-      socket.off('new_message');
+      socket.off('new_message', handleNewMessage);
+      socket.off('conversation_updated', handleConvUpdated);
     };
   }, [socket, activeConversationId, queryClient]);
 
@@ -54,12 +83,36 @@ export default function Inbox() {
     }
   });
 
+  const sendReplyMutation = useMutation({
+    mutationFn: (text: string) => sendManualMessage(activeConversationId!, text),
+    onSuccess: (newMsg) => {
+      setReplyText('');
+      queryClient.setQueryData(['messages', activeConversationId], (old: any) => {
+        return old ? [...old, newMsg] : [newMsg];
+      });
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    }
+  });
+
   const handleSendReply = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!replyText.trim() || !activeConversationId) return;
-    // TODO: Send reply to backend (Phase 6 API)
-    setReplyText('');
+    const text = replyText.trim();
+    if (!text || !activeConversationId || sendReplyMutation.isPending) return;
+
+    // If human takeover is not already enabled, enable it automatically when an agent types
+    if (!activeConv?.humanTakeover) {
+      toggleTakeoverMutation.mutate(true);
+    }
+
+    sendReplyMutation.mutate(text);
   };
+
+  const filteredConversations = conversations.filter((c: any) => {
+    const username = (c.contactId?.username || '').toLowerCase();
+    const name = (c.contactId?.name || '').toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
+    return !q || username.includes(q) || name.includes(q);
+  });
 
   return (
     <div className="flex h-[calc(100vh-8rem)] bg-card border border-border rounded-xl overflow-hidden shadow-sm animate-fade-in">
@@ -69,35 +122,50 @@ export default function Inbox() {
         <div className="p-4 border-b border-border">
           <div className="relative">
             <Search size={16} className="absolute left-3 top-3 text-muted-foreground" />
-            <Input className="pl-9 bg-background" placeholder="Search leads..." />
+            <Input 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 bg-background" 
+              placeholder="Search leads..." 
+            />
           </div>
         </div>
         
         <div className="flex-1 overflow-y-auto">
-          {conversations.map((conv: any) => (
-            <div 
-              key={conv._id}
-              onClick={() => setActiveConversationId(conv._id)}
-              className={`p-4 border-b border-border cursor-pointer transition-colors ${activeConversationId === conv._id ? 'bg-secondary' : 'hover:bg-secondary/50'}`}
-            >
-              <div className="flex justify-between items-start mb-1">
-                <span className="font-medium text-foreground">{conv.contactId?.username || 'Unknown Lead'}</span>
-                <span className="text-[10px] text-muted-foreground">
-                  {new Date(conv.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {conv.humanTakeover ? (
-                  <span className="bg-amber-500/20 text-amber-500 text-[10px] px-1.5 py-0.5 rounded font-medium">AGENT</span>
-                ) : (
-                  <span className="bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded font-medium">AI BOT</span>
-                )}
-                <span className="text-xs text-muted-foreground truncate flex-1">
-                  Active Conversation
-                </span>
-              </div>
+          {loadingConversations ? (
+            <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
+              <Loader2 className="animate-spin mr-2" size={16} /> Loading conversations...
             </div>
-          ))}
+          ) : filteredConversations.length === 0 ? (
+            <div className="p-6 text-center text-xs text-muted-foreground">
+              No conversations found. DMs sent to your connected Instagram account will appear here.
+            </div>
+          ) : (
+            filteredConversations.map((conv: any) => (
+              <div 
+                key={conv._id}
+                onClick={() => setActiveConversationId(conv._id)}
+                className={`p-4 border-b border-border cursor-pointer transition-colors ${activeConversationId === conv._id ? 'bg-secondary' : 'hover:bg-secondary/50'}`}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="font-medium text-foreground">{conv.contactId?.username || conv.contactId?.name || 'Instagram User'}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {conv.lastMessageAt ? new Date(conv.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {conv.humanTakeover ? (
+                    <span className="bg-amber-500/20 text-amber-500 text-[10px] px-1.5 py-0.5 rounded font-medium">AGENT</span>
+                  ) : (
+                    <span className="bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded font-medium">AI BOT</span>
+                  )}
+                  <span className="text-xs text-muted-foreground truncate flex-1">
+                    {conv.humanTakeover ? 'Human takeover active' : 'AI automated responses'}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -112,8 +180,8 @@ export default function Inbox() {
                   <UserIcon size={20} className="text-muted-foreground" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-foreground">{activeConv?.contactId?.username}</h3>
-                  <p className="text-xs text-muted-foreground">Instagram Lead</p>
+                  <h3 className="font-semibold text-foreground">{activeConv?.contactId?.username || activeConv?.contactId?.name || 'Instagram Lead'}</h3>
+                  <p className="text-xs text-muted-foreground">Instagram Lead {activeConv?.contactId?.instagramUserId ? `(${activeConv.contactId.instagramUserId})` : ''}</p>
                 </div>
               </div>
               
@@ -126,31 +194,48 @@ export default function Inbox() {
                 {activeConv?.humanTakeover ? (
                   <>Resume AI Bot</>
                 ) : (
-                  <><Bot size={16} /> Pause AI & Reply</>
+                  <><Bot size={16} /> Pause AI & Take Over</>
                 )}
               </Button>
             </div>
 
             {/* Messages Area */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {messages.map((msg: any) => {
-                const isUser = msg.source === 'INSTAGRAM';
-                return (
-                  <div key={msg._id} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                      isUser 
-                        ? 'bg-secondary text-secondary-foreground rounded-tl-sm' 
-                        : 'bg-primary text-primary-foreground rounded-tr-sm'
-                    }`}>
-                      <p className="text-sm leading-relaxed">{msg.text}</p>
-                      <div className={`text-[10px] mt-1 opacity-70 ${isUser ? 'text-left' : 'text-right'}`}>
-                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {!isUser && ` • ${msg.source === 'SYSTEM_AI' ? 'AI Generated' : 'Automated'}`}
+              {loadingMessages ? (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  <Loader2 className="animate-spin mr-2" size={16} /> Loading messages...
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+                  No messages yet in this conversation.
+                </div>
+              ) : (
+                messages.map((msg: any) => {
+                  const isUser = msg.source === 'INSTAGRAM';
+                  return (
+                    <div key={msg._id} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
+                      <div className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                        isUser 
+                          ? 'bg-secondary text-secondary-foreground rounded-tl-sm' 
+                          : 'bg-primary text-primary-foreground rounded-tr-sm'
+                      }`}>
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                        <div className={`text-[10px] mt-1 opacity-70 ${isUser ? 'text-left' : 'text-right'}`}>
+                          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {!isUser && ` • ${
+                            msg.source === 'SYSTEM_AI' 
+                              ? 'AI Assistant' 
+                              : msg.source === 'SYSTEM_AGENT' 
+                              ? 'Agent' 
+                              : 'Automated'
+                          }`}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Reply Input */}
@@ -159,12 +244,21 @@ export default function Inbox() {
                 <Input 
                   value={replyText}
                   onChange={(e) => setReplyText(e.target.value)}
-                  placeholder={activeConv?.humanTakeover ? "Type your message..." : "Pause AI to send a manual reply..."} 
-                  disabled={!activeConv?.humanTakeover}
+                  placeholder={
+                    activeConv?.humanTakeover 
+                      ? "Type your message..." 
+                      : "Type a message to reply and take over from AI..."
+                  } 
+                  disabled={sendReplyMutation.isPending}
                   className="flex-1 rounded-full px-6"
                 />
-                <Button type="submit" disabled={!activeConv?.humanTakeover || !replyText.trim()} size="icon" className="rounded-full shrink-0">
-                  <Send size={18} />
+                <Button 
+                  type="submit" 
+                  disabled={!replyText.trim() || sendReplyMutation.isPending} 
+                  size="icon" 
+                  className="rounded-full shrink-0"
+                >
+                  {sendReplyMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
                 </Button>
               </form>
             </div>

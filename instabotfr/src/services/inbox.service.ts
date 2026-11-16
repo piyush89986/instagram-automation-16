@@ -12,6 +12,11 @@ export const fetchMessages = async (conversationId: string) => {
 };
 
 export const toggleHumanTakeover = async (conversationId: string, humanTakeover: boolean) => {
-  const { data } = await api.put(`/inbox/conversations/${conversationId}/takeover`, { humanTakeover });
+  const { data } = await api.patch(`/inbox/conversations/${conversationId}/takeover`, { humanTakeover });
   return data.data.conversation;
+};
+
+export const sendManualMessage = async (conversationId: string, message: string) => {
+  const { data } = await api.post(`/inbox/conversations/${conversationId}/messages`, { message });
+  return data.data.message;
 };

@@ -203,7 +203,7 @@ export const processWebhookEvent = async (event: any) => {
         if (replyText || aiNodeFound) break; // Only process one workflow
       }
     } else if (triggerType === 'DM_RECEIVED') {
-      // Fallback: Check if they created a Chatbot via the new frontend UI
+      // Fallback: Check if they created a Chatbot via the frontend UI
       const chatbots = await Chatbot.find({
         tenantId: account.workspaceId,
         channel: 'instagram',
@@ -213,68 +213,100 @@ export const processWebhookEvent = async (event: any) => {
       if (chatbots.length > 0) {
         console.log(`🤖 Found active Chatbot for Instagram`);
         aiNodeFound = true;
+      } else {
+        // Default to AI assistant when no custom workflow is set up
+        console.log(`🤖 No custom workflow or Chatbot found. Activating default AI assistant for DM.`);
+        aiNodeFound = true;
       }
     }
 
     if (aiNodeFound) {
-        console.log(`🤖 AI Generation started...`);
-        const { AIFactory } = await import('../../core/ai/AIFactory');
-        const provider = AIFactory.getProvider('OPENAI');
-        let systemPrompt = 'You are a helpful assistant.';
-        
-        // Fetch global knowledge base
-        const workspaceData = await Workspace.findById(account.workspaceId);
-        if (workspaceData && workspaceData.aiKnowledgeBase) {
-          systemPrompt = `${systemPrompt}\n\n=== GLOBAL KNOWLEDGE BASE ===\n${workspaceData.aiKnowledgeBase}`;
-        }
-        
-        systemPrompt = `${systemPrompt}\n\nCRITICAL INSTRUCTION: If the user asks about a specific product (e.g. "Do you have R15?" or "Show me SP Shine"), you MUST call the \`search_products\` tool! Do NOT just reply with text. The tool is required to show the user the visual product card with images and buttons.`;
-        
-        // Fetch last 10 messages for context
-        const history = await InstagramMessage.find({ conversationId: conversation._id })
-          .sort({ createdAt: 1 })
-          .limit(10);
+      console.log(`🤖 AI Generation started...`);
+      const { AIFactory } = await import('../../core/ai/AIFactory');
+      const aiProviderType = (process.env.AI_PROVIDER === 'GEMINI' || (!process.env.OPENAI_API_KEY && process.env.GEMINI_API_KEY)) ? 'GEMINI' : 'OPENAI';
+      const provider = AIFactory.getProvider(aiProviderType);
+      let systemPrompt = 'You are a helpful and polite Instagram assistant for this business. Keep answers concise, clear, and friendly.';
+      
+      // Fetch global knowledge base
+      const workspaceData = await Workspace.findById(account.workspaceId);
+      if (workspaceData && workspaceData.aiKnowledgeBase) {
+        systemPrompt = `${systemPrompt}\n\n=== GLOBAL KNOWLEDGE BASE ===\n${workspaceData.aiKnowledgeBase}`;
+      }
+      
+      systemPrompt = `${systemPrompt}\n\nCRITICAL INSTRUCTION: If the user asks about a specific product (e.g. "Do you have R15?" or "Show me SP Shine"), you MUST call the \`search_products\` tool! Do NOT just reply with text. The tool is required to show the user the visual product card with images and buttons.`;
+      
+      // Fetch last 10 messages for context
+      const history = await InstagramMessage.find({ conversationId: conversation._id })
+        .sort({ createdAt: 1 })
+        .limit(10);
 
-        const aiMessages = history.map(h => ({
-          role: h.source === 'INSTAGRAM' ? 'user' : 'assistant',
-          content: h.text || ''
-        })) as any[];
+      const aiMessages = history.map(h => ({
+        role: h.source === 'INSTAGRAM' ? 'user' : 'assistant',
+        content: h.text || ''
+      })) as any[];
 
-        // Add the current message
-        aiMessages.push({ role: 'user', content: messageText });
+      // Add the current message
+      aiMessages.push({ role: 'user', content: messageText });
 
-        try {
-          replyText = await provider.generateReply(aiMessages, systemPrompt, undefined, { 
-            contactId: contact._id.toString(),
-            workspaceId: account.workspaceId.toString(),
-            igAccountId: igAccountId,
-            senderId: senderId
-          });
-          console.log(`🤖 AI generated reply successfully`);
-        } catch (e) {
-          console.error('AI Generation Failed:', e);
-          replyText = 'Sorry, I am having trouble connecting to my AI brain right now.';
-        }
+      try {
+        replyText = await provider.generateReply(aiMessages, systemPrompt, undefined, { 
+          contactId: contact._id.toString(),
+          workspaceId: account.workspaceId.toString(),
+          igAccountId: igAccountId,
+          senderId: senderId
+        });
+        console.log(`🤖 AI generated reply successfully:`, replyText);
+      } catch (e: any) {
+        console.error('AI Generation Failed:', e?.message || e);
+        replyText = 'Thanks for reaching out! A representative will connect with you shortly.';
+      }
     }
 
     if (replyText) {
-      console.log(`🤖 Sending reply via messaging service...`);
+      console.log(`🤖 Processing generated reply...`);
+      let botMessage: any = null;
+
+      // 1. Save bot reply to database first so live inbox and audit history are never lost
       try {
-        // Strip out hidden context tags before sending to Meta
-        const textToMeta = replyText.replace(/ \[HIDDEN_CONTEXT:.*?\]/g, '').trim();
-        if (textToMeta) {
-          await sendTextMessage(account.instagramAccountId || igAccountId, senderId, textToMeta);
-          console.log(`🤖 Text message sent successfully to Meta`);
-        }
-        
-        // Only save to database if Meta successfully delivered it (save the full replyText including hidden context)
-        await InstagramMessage.create({
+        botMessage = await InstagramMessage.create({
           conversationId: conversation._id,
-          senderId: account.metaAccountId,
+          senderId: account.metaAccountId || account.instagramAccountId || igAccountId,
           text: replyText,
           source: aiNodeFound ? 'SYSTEM_AI' : 'AUTOMATION',
           messageType: 'DM',
         });
+
+        // Update conversation lastMessageAt
+        await InstagramConversation.findByIdAndUpdate(conversation._id, {
+          lastMessageAt: new Date(),
+        });
+
+        // 2. Real-time broadcast bot message to Live Inbox (Socket.IO)
+        try {
+          getIO().to(account.workspaceId.toString()).emit('new_message', {
+            conversation,
+            message: botMessage,
+            contact
+          });
+        } catch (socketErr) {
+          console.error('Socket broadcast for bot message failed:', socketErr);
+        }
+      } catch (dbErr) {
+        console.error('Failed to save bot message in database:', dbErr);
+      }
+
+      // 3. Dispatch text to Meta Graph API
+      try {
+        // Strip out hidden context tags before sending to Meta
+        const textToMeta = replyText.replace(/ \[HIDDEN_CONTEXT:.*?\]/g, '').trim();
+        if (textToMeta) {
+          const metaRes = await sendTextMessage(account.instagramAccountId || igAccountId, senderId, textToMeta);
+          console.log(`🤖 Text message sent successfully to Meta:`, metaRes);
+          if (botMessage && metaRes?.message_id) {
+            botMessage.metaMessageId = metaRes.message_id;
+            await botMessage.save();
+          }
+        }
       } catch (err: any) {
         console.error(`🤖 Meta Message Send Failed:`, err.response?.data || err.message);
       }
